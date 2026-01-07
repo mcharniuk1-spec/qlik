@@ -1,0 +1,446 @@
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..f2d9b69
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,48 @@
++# ============================
++# BI.Prozorro (Qlik Sense) URL
++# ============================
++# Example:
++# https://bi.prozorro.org/sense/app/<APP_ID>/sheet/<SHEET_ID>/state/analysis
++BI_URL="https://bi.prozorro.org/sense/app/<APP_ID>/sheet/<SHEET_ID>/state/analysis"
++
++# ============================
++# After: npm run discover
++# ============================
++TABLE_VIZ_ID=""
++
++# ============================
++# Qlik field names (set after you identify them)
++# ============================
++FIELD_CPV=""
++FIELD_ITEM_NAME=""
++FIELD_DATE_YEAR=""
++
++# ============================
++# Milk filters
++# ============================
++MILK_CODES="15510000-6,15511000-3"
++MILK_KEYWORDS="молоко,milk,пастер,ультрапастер,UHT"
++
++# ============================
++# Output
++# ============================
++OUT_DIR="./out"
++HEADLESS="true"
++EXPORT_FORMAT="CSV_C"
++START_YEAR="2015"
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..e7d2c1a
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,11 @@
++node_modules/
++out/
++.env
++.DS_Store
++playwright-report/
++test-results/
++*.log
+diff --git a/docs/USAGE.md b/docs/USAGE.md
+new file mode 100644
+index 0000000..10cbd59
+--- /dev/null
++++ b/docs/USAGE.md
+@@ -0,0 +1,206 @@
++# Qlik (BI.Prozorro) → exportData() → CSV/XLSX
++
++## What this does
++1) Opens a BI.Prozorro Qlik sheet in a browser (Playwright)
++2) Discovers visualizations on the sheet (id/title/type)
++3) Applies "milk" filter (CPV or keywords)
++4) Exports underlying table data via Qlik Visualization API `exportData()`
++5) Partitions export by years to avoid size/time limits
++6) (Optional) Converts CSV → XLSX
++
++---
++
++## Requirements
++- Node.js 18+ (20+ recommended)
++- Playwright browsers: `npx playwright install`
++
++---
++
++## Setup
++```bash
++cp .env.example .env
++```
++Edit `.env` and set `BI_URL`.
++
++---
++
++## 1) Discover table visualization ID
++```bash
++npm run discover
++```
++Pick the visualization that is your procurement table and set:
++`TABLE_VIZ_ID="..."`
++
++---
++
++## 2) Identify Qlik field names
++You need:
++- `FIELD_DATE_YEAR` (required)
++- either `FIELD_CPV` (best) OR `FIELD_ITEM_NAME` (fallback)
++
++In browser DevTools Console (on the BI page), run:
++```js
++require(["js/qlik"], async (qlik) => {
++  const app = qlik.currApp();
++  const f = await app.getList("FieldList");
++  const l = await f.getLayout();
++  console.table(l.qFieldList.qItems.map(x => ({ name: x.qName, distinct: x.qCardinal })));
++});
++```
++
++---
++
++## 3) Export milk for all years
++```bash
++npm run export:milk
++```
++Outputs: `out/prozorro_milk_<year>.csv`
++
++---
++
++## 4) Convert CSV → XLSX
++```bash
++npm run to:xlsx
++```
++Note: Excel row limit applies; per-year files recommended.
+diff --git a/package.json b/package.json
+new file mode 100644
+index 0000000..8b2dce1
+--- /dev/null
++++ b/package.json
+@@ -0,0 +1,24 @@
++{
++  "name": "prozorro-bi-qlik-export",
++  "type": "module",
++  "version": "1.0.0",
++  "private": true,
++  "scripts": {
++    "discover": "node scripts/01_discover.mjs",
++    "export:milk": "node scripts/02_export_milk_all.mjs",
++    "to:xlsx": "node scripts/03_to_xlsx.mjs"
++  },
++  "dependencies": {
++    "csv-parse": "^5.6.0",
++    "dotenv": "^16.4.5",
++    "exceljs": "^4.4.0",
++    "playwright": "^1.46.0"
++  }
++}
+diff --git a/scripts/01_discover.mjs b/scripts/01_discover.mjs
+new file mode 100644
+index 0000000..31b6a20
+--- /dev/null
++++ b/scripts/01_discover.mjs
+@@ -0,0 +1,25 @@
++import "dotenv/config";
++import { launchBrowser, openBI } from "../src/browser.mjs";
++import { discoverSheetVisualizations } from "../src/discover.mjs";
++
++const url = process.env.BI_URL;
++const headless = (process.env.HEADLESS || "true") === "true";
++
++if (!url) {
++  throw new Error("BI_URL is required in .env");
++}
++
++const { browser, page } = await launchBrowser({ headless });
++await openBI(page, url);
++
++const res = await discoverSheetVisualizations(page);
++console.log(JSON.stringify(res, null, 2));
++
++await browser.close();
+diff --git a/scripts/02_export_milk_all.mjs b/scripts/02_export_milk_all.mjs
+new file mode 100644
+index 0000000..3c3f10d
+--- /dev/null
++++ b/scripts/02_export_milk_all.mjs
+@@ -0,0 +1,83 @@
++import "dotenv/config";
++import { launchBrowser, openBI } from "../src/browser.mjs";
++import { applyMilkFilter } from "../src/select.mjs";
++import { exportViz } from "../src/export.mjs";
++import { exportByYears } from "../src/partition.mjs";
++
++const url = process.env.BI_URL;
++const headless = (process.env.HEADLESS || "true") === "true";
++const vizId = process.env.TABLE_VIZ_ID;
++const outDir = process.env.OUT_DIR || "./out";
++const exportFormat = process.env.EXPORT_FORMAT || "CSV_C";
++
++const fieldCpv = (process.env.FIELD_CPV || "").trim();
++const fieldItemName = (process.env.FIELD_ITEM_NAME || "").trim();
++const fieldYear = (process.env.FIELD_DATE_YEAR || "").trim();
++
++const milkCodes = (process.env.MILK_CODES || "")
++  .split(",")
++  .map((s) => s.trim())
++  .filter(Boolean);
++
++const milkKeywords = (process.env.MILK_KEYWORDS || "")
++  .split(",")
++  .map((s) => s.trim())
++  .filter(Boolean);
++
++const startYear = Number(process.env.START_YEAR || "2015");
++
++if (!url) throw new Error("BI_URL is required");
++if (!vizId) throw new Error("TABLE_VIZ_ID is required (run: npm run discover)");
++if (!fieldYear) throw new Error("FIELD_DATE_YEAR is required for full export by years");
++
++const { browser, page } = await launchBrowser({ headless });
++await openBI(page, url);
++
++const filterRes = await applyMilkFilter(page, {
++  fieldCpv,
++  fieldItemName,
++  milkCodes,
++  keywords: milkKeywords.length
++    ? milkKeywords
++    : ["молоко", "milk", "пастер", "ультрапастер", "uht"],
++});
++console.log("Milk filter:", filterRes);
++
++const currentYear = new Date().getFullYear();
++const years = [];
++for (let y = startYear; y <= currentYear; y++) years.push(y);
++
++const results = await exportByYears(page, {
++  yearField: fieldYear,
++  years,
++  exportFn: async (y) => {
++    return await exportViz(page, {
++      vizId,
++      outDir,
++      fileBase: `prozorro_milk_${y}`,
++      format: exportFormat,
++    });
++  },
++});
++
++console.log("Done. Files:");
++for (const r of results) console.log(" -", r.outPath);
++
++await browser.close();
+diff --git a/scripts/03_to_xlsx.mjs b/scripts/03_to_xlsx.mjs
+new file mode 100644
+index 0000000..2e9db46
+--- /dev/null
++++ b/scripts/03_to_xlsx.mjs
+@@ -0,0 +1,55 @@
++import "dotenv/config";
++import fs from "node:fs/promises";
++import path from "node:path";
++import ExcelJS from "exceljs";
++import { parse } from "csv-parse/sync";
++
++const outDir = process.env.OUT_DIR || "./out";
++const files = (await fs.readdir(outDir)).filter((f) => f.toLowerCase().endsWith(".csv"));
++
++if (!files.length) {
++  console.log("No CSV files found in", outDir);
++  process.exit(0);
++}
++
++for (const f of files) {
++  const csvPath = path.join(outDir, f);
++  const xlsxPath = csvPath.replace(/\.csv$/i, ".xlsx");
++
++  const csv = await fs.readFile(csvPath, "utf-8");
++  const records = parse(csv, {
++    columns: false,
++    skip_empty_lines: true,
++    relax_quotes: true,
++    relax_column_count: true,
++  });
++
++  const wb = new ExcelJS.Workbook();
++  const ws = wb.addWorksheet("data");
++  for (const row of records) ws.addRow(row);
++
++  await wb.xlsx.writeFile(xlsxPath);
++  console.log("Wrote", xlsxPath);
++}
+diff --git a/src/browser.mjs b/src/browser.mjs
+new file mode 100644
+index 0000000..5c3d916
+--- /dev/null
++++ b/src/browser.mjs
+@@ -0,0 +1,28 @@
++import { chromium } from "playwright";
++
++export async function launchBrowser({ headless = true } = {}) {
++  const browser = await chromium.launch({ headless });
++  const context = await browser.newContext({
++    viewport: { width: 1400, height: 900 },
++  });
++  const page = await context.newPage();
++  return { browser, context, page };
++}
++
++export async function openBI(page, url) {
++  await page.goto(url, { waitUntil: "domcontentloaded" });
++  await page.waitForTimeout(5000);
++  return true;
++}
+diff --git a/src/discover.mjs b/src/discover.mjs
+new file mode 100644
+index 0000000..f81e2b1
+--- /dev/null
++++ b/src/discover.mjs
+@@ -0,0 +1,69 @@
++export async function discoverSheetVisualizations(page) {
++  return await page.evaluate(async () => {
++    const req = window.requirejs || window.require;
++    if (!req) throw new Error("No requirejs/require found on page. Qlik may not be loaded yet.");
++
++    const qlik = await new Promise((resolve, reject) => {
++      req(["js/qlik"], resolve, reject);
++    });
++
++    const app = qlik.currApp();
++    if (!app) throw new Error("Cannot get current app via qlik.currApp()");
++
++    const sheetId = window.location.pathname.split("/sheet/")[1]?.split("/")[0];
++    if (!sheetId) throw new Error("Cannot parse sheetId from URL");
++
++    const sheet = await app.getObject(sheetId);
++    const layout = await sheet.getLayout();
++
++    const items = layout?.cells || layout?.qChildList?.qItems || [];
++    const out = [];
++
++    for (const it of items) {
++      const id = it?.name || it?.qInfo?.qId || it?.qId || it?.qObject?.qInfo?.qId;
++      if (!id) continue;
++
++      try {
++        const v = await app.visualization.get(id);
++        const vLayout = await v.model.getLayout();
++        out.push({
++          id,
++          type: vLayout?.visualization || vLayout?.qInfo?.qType || "unknown",
++          title: vLayout?.title || vLayout?.qMeta?.title || "",
++        });
++      } catch (e) {
++        out.push({ id, type: "unknown", title: "", error: String(e) });
++      }
++    }
++
++    return { sheetId, count: out.length, visuals: out };
++  });
++}
+diff --git a/src/export.mjs b/src/export.mjs
+new file mode 100644
+index 0000000..e88c8a6
+--- /dev/null
++++ b/src/export.mjs
+@@ -0,0 +1,58 @@
++import fs from "node:fs/promises";
++import path from "node:path";
++
++export async function exportViz(page, { vizId, outDir, fileBase, format = "CSV_C" } = {}) {
++  if (!vizId) throw new Error("vizId is required");
++  if (!outDir) throw new Error("outDir is required");
++  if (!fileBase) throw new Error("fileBase is required");
++
++  await fs.mkdir(outDir, { recursive: true });
++
++  const exportInfo = await page.evaluate(async ({ vizId, format }) => {
++    const req = window.requirejs || window.require;
++    const qlik = await new Promise((resolve, reject) => req(["js/qlik"], resolve, reject));
++    const app = qlik.currApp();
++    if (!app) throw new Error("No app");
++
++    const v = await app.visualization.get(vizId);
++    const res = await v.exportData({ format });
++    return res;
++  }, { vizId, format });
++
++  const qUrl = exportInfo?.qUrl;
++  if (!qUrl) throw new Error("exportData returned no qUrl. Export may be disabled or vizId incorrect.");
++
++  const absUrl = new URL(qUrl, page.url()).toString();
++  const resp = await page.request.get(absUrl);
++  if (!resp.ok()) throw new Error(`Download failed: ${resp.status()} ${resp.statusText()}`);
++
++  const ext = format === "OOXML" ? "xlsx" : "csv";
++  const outPath = path.join(outDir, `${fileBase}.${ext}`);
++  await fs.writeFile(outPath, await resp.body());
++
++  return { outPath, absUrl, exportInfo };
++}
+diff --git a/src/partition.mjs b/src/partition.mjs
+new file mode 100644
+index 0000000..509e8e5
+--- /dev/null
++++ b/src/partition.mjs
+@@ -0,0 +1,31 @@
++export async function exportByYears(page, { yearField, years, exportFn } = {}) {
++  if (!yearField) throw new Error("yearField is required");
++  if (!Array.isArray(years) || !years.length) throw new Error("years[] is required");
++  if (typeof exportFn !== "function") throw new Error("exportFn is required");
++
++  const results = [];
++  for (const y of years) {
++    await page.evaluate(async ({ yearField, y }) => {
++      const req = window.requirejs || window.require;
++      const qlik = await new Promise((resolve, reject) => req(["js/qlik"], resolve, reject));
++      const app = qlik.currApp();
++      if (!app) throw new Error("No app");
++      await app.field(yearField).selectValues([{ qText: String(y) }], false, true);
++    }, { yearField, y });
++
++    const r = await exportFn(y);
++    results.push(r);
++  }
++  return results;
++}
+diff --git a/src/select.mjs b/src/select.mjs
+new file mode 100644
+index 0000000..b82b7a8
+--- /dev/null
++++ b/src/select.mjs
+@@ -0,0 +1,56 @@
++export async function applyMilkFilter(page, { fieldCpv, fieldItemName, milkCodes = [], keywords = ["молоко", "milk"] } = {}) {
++  return await page.evaluate(async ({ fieldCpv, fieldItemName, milkCodes, keywords }) => {
++    const req = window.requirejs || window.require;
++    const qlik = await new Promise((resolve, reject) => req(["js/qlik"], resolve, reject));
++    const app = qlik.currApp();
++    if (!app) throw new Error("No app");
++
++    try { await app.clearAll(); } catch {}
++
++    if (fieldCpv && milkCodes.length) {
++      const f = app.field(fieldCpv);
++      await f.selectMatch(milkCodes.join("|"), true);
++      return { ok: true, method: "cpv", fieldCpv, milkCodes };
++    }
++
++    if (fieldItemName) {
++      const f = app.field(fieldItemName);
++      const pattern = keywords.map(k => `*${k}*`).join("|");
++      await f.selectMatch(pattern, true);
++      return { ok: true, method: "name", fieldItemName, pattern };
++    }
++
++    return { ok: false, error: "No usable field provided. Set FIELD_CPV or FIELD_ITEM_NAME in .env" };
++  }, { fieldCpv, fieldItemName, milkCodes, keywords });
++}
