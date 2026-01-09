@@ -3,10 +3,6 @@ name: export
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: "incremental або backfill"
-        required: true
-        default: "incremental"
       max_pages:
         description: "Скільки сторінок /tenders обробити за запуск"
         required: true
@@ -15,8 +11,17 @@ on:
         description: "Ліміт часу (сек) на fetch-крок"
         required: true
         default: "2400"
+      reset_state:
+        description: "true щоб почати з START_OFFSET і обнулити state"
+        required: true
+        default: "false"
+      reset_db:
+        description: "true щоб видалити SQLite і зібрати з нуля"
+        required: true
+        default: "false"
+
   schedule:
-    - cron: "17 3 * * *"   # щодня
+    - cron: "17 3 * * *"
 
 permissions:
   contents: write
@@ -30,15 +35,22 @@ jobs:
       OP_API_BASE: "https://public.api.openprocurement.org/api/2.5"
       DATA_DIR: "data"
       OUT_DIR: "out"
-      # дефолтні значення для schedule-run
-      MODE: "incremental"
+
       MAX_PAGES: "25"
       MAX_RUNTIME_SECONDS: "2400"
       PAGE_SIZE: "100"
       CONCURRENCY: "12"
-      # “молоко” — можна міняти в репо, без секретів
+
+      # якщо треба старт з певного моменту (рядок!)
+      # можна лишити порожнім: тоді перший запуск піде з /tenders без offset
+      START_OFFSET: ""
+
+      # Milk filter
       MILK_CPV_PREFIXES: "1551"
-      MILK_KEYWORDS: "молоко,milk,uht,ультрапастер,пастер"
+      MILK_KEYWORDS: "молоко,milk,uht,ультрапастер,пастер,вершки,cream"
+
+      RESET_STATE: "false"
+      RESET_DB: "false"
 
     steps:
       - name: Checkout
@@ -58,11 +70,12 @@ jobs:
       - name: Resolve inputs (workflow_dispatch only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          echo "MODE=${{ inputs.mode }}" >> $GITHUB_ENV
           echo "MAX_PAGES=${{ inputs.max_pages }}" >> $GITHUB_ENV
           echo "MAX_RUNTIME_SECONDS=${{ inputs.max_runtime_seconds }}" >> $GITHUB_ENV
+          echo "RESET_STATE=${{ inputs.reset_state }}" >> $GITHUB_ENV
+          echo "RESET_DB=${{ inputs.reset_db }}" >> $GITHUB_ENV
 
-      - name: Fetch tenders (bounded incremental/backfill)
+      - name: Fetch tenders (bounded)
         run: |
           python -m src.fetch_tenders
 
