@@ -11,12 +11,15 @@ def main() -> None:
 
     os.makedirs(cfg.out_dir, exist_ok=True)
 
+    if not os.path.exists(cfg.db_path):
+        logger.warning("No DB found. Nothing to export.")
+        return
+
     conn = sqlite3.connect(cfg.db_path)
 
     tenders = pd.read_sql_query("SELECT * FROM milk_tenders", conn)
     items = pd.read_sql_query("SELECT * FROM milk_items", conn)
 
-    # стабільне сортування
     if "dateModified" in tenders.columns:
         tenders = tenders.sort_values(["dateModified", "tender_id"], ascending=[True, True])
     if "dateModified" in items.columns:
