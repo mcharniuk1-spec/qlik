@@ -17,12 +17,15 @@ class Config:
     data_dir: str
     out_dir: str
 
+    log_dir: str
+    keep_log_files: int
+
     max_pages: int
     max_runtime_seconds: int
     page_size: int
     concurrency: int
 
-    start_offset: str  # важливо: offset як рядок
+    start_offset: str
     reset_state: bool
     reset_db: bool
 
@@ -36,6 +39,7 @@ class Config:
     def load() -> "Config":
         data_dir = _env("DATA_DIR", "data")
         out_dir = _env("OUT_DIR", "out")
+        log_dir = _env("LOG_DIR", os.path.join(out_dir, "logs"))
 
         start_offset = _env("START_OFFSET", "").strip()
 
@@ -43,6 +47,9 @@ class Config:
             op_api_base=_env("OP_API_BASE", "https://public.api.openprocurement.org/api/2.5"),
             data_dir=data_dir,
             out_dir=out_dir,
+
+            log_dir=log_dir,
+            keep_log_files=int(_env("KEEP_LOG_FILES", "15")),
 
             max_pages=int(_env("MAX_PAGES", "25")),
             max_runtime_seconds=int(_env("MAX_RUNTIME_SECONDS", "2400")),
