@@ -4,6 +4,7 @@ from datetime import datetime
 
 def setup_logger(name: str, out_dir: str) -> logging.Logger:
     os.makedirs(out_dir, exist_ok=True)
+
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
