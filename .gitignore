@@ -5,12 +5,12 @@ __pycache__/
 .env
 .env.*
 
+# Outputs / state
+out/
+data/raw/
+*.log
+
 # Local junk
 .env.save
 _local_backup/
 package-lock.json
-
-# Outputs / data
-out/
-data/raw/
-*.log
