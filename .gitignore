@@ -14,3 +14,8 @@ data/raw/
 .env.save
 _local_backup/
 package-lock.json
+
+out/logs/*
+out/reports/*
+!out/logs/.keep
+!out/reports/.keep
