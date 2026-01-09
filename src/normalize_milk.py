@@ -1,182 +1,195 @@
-import os
+# src/normalize_milk.py
+from __future__ import annotations
+
+import argparse
 import json
+import os
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from .config import Config
-from .logging_utils import setup_stage_logger
+
+@dataclass
+class LogRow:
+    ts: str
+    stage: str
+    level: str
+    message: str
+    details: str = ""
 
 
-def _safe_sort(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    cols_present = [c for c in cols if c in df.columns]
-    if not cols_present:
-        return df
-    return df.sort_values(cols_present, ascending=[True] * len(cols_present))
-
-
-def _read_text_lines(path: str) -> list[str]:
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return [line.rstrip("\n") for line in f]
-    except FileNotFoundError:
-        return []
-
-
-def _build_logs_df(cfg: Config) -> pd.DataFrame:
+class RunLogger:
     """
-    Collect stage logs and put them into a single dataframe.
-    We take the *_latest.log files (these represent the current run).
+    Простий логер:
+    - друкує в stdout (видно в GitHub Actions logs)
+    - пише jsonl у файл (потім вшиваємо в XLSX -> sheet 'logs')
     """
-    fetch_latest = os.path.join(cfg.log_dir, "fetch_latest.log")
-    normalize_latest = os.path.join(cfg.log_dir, "normalize_latest.log")
+    def __init__(self, jsonl_path: Path):
+        self.jsonl_path = jsonl_path
+        self.jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        self.rows: List[LogRow] = []
 
-    rows = []
+    def _now(self) -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    for stage, path in [("fetch", fetch_latest), ("normalize", normalize_latest)]:
-        lines = _read_text_lines(path)
-        for i, line in enumerate(lines, start=1):
-            rows.append({"stage": stage, "line_no": i, "text": line})
-
-    return pd.DataFrame(rows, columns=["stage", "line_no", "text"])
-
-
-def _build_progress_df(cfg: Config) -> pd.DataFrame:
-    """
-    Merge state + fetch_report/normalize_report + github run metadata into a compact sheet.
-    """
-    # State
-    state = {}
-    if os.path.exists(cfg.state_path):
-        try:
-            with open(cfg.state_path, "r", encoding="utf-8") as f:
-                state = json.load(f) or {}
-        except Exception:
-            state = {}
-
-    # Reports
-    fetch_report_path = os.path.join(cfg.out_dir, "reports", "fetch_report.json")
-    normalize_report_path = os.path.join(cfg.out_dir, "reports", "normalize_report.json")
-
-    fetch_report = {}
-    normalize_report = {}
-
-    for p, target in [(fetch_report_path, "fetch"), (normalize_report_path, "normalize")]:
-        if os.path.exists(p):
+    def log(self, stage: str, message: str, level: str = "INFO", **kwargs: Any) -> None:
+        details = ""
+        if kwargs:
             try:
-                with open(p, "r", encoding="utf-8") as f:
-                    if target == "fetch":
-                        fetch_report = json.load(f) or {}
-                    else:
-                        normalize_report = json.load(f) or {}
+                details = json.dumps(kwargs, ensure_ascii=False)
             except Exception:
-                pass
+                details = str(kwargs)
 
-    # GitHub run metadata (available in Actions)
-    meta = {
-        "github_run_id": os.getenv("GITHUB_RUN_ID"),
-        "github_run_number": os.getenv("GITHUB_RUN_NUMBER"),
-        "github_workflow": os.getenv("GITHUB_WORKFLOW"),
-        "github_job": os.getenv("GITHUB_JOB"),
-        "github_ref": os.getenv("GITHUB_REF"),
-        "github_ref_name": os.getenv("GITHUB_REF_NAME"),
-        "github_sha": os.getenv("GITHUB_SHA"),
-        "github_repository": os.getenv("GITHUB_REPOSITORY"),
-        "generated_utc": datetime.now(timezone.utc).isoformat(),
-    }
+        row = LogRow(ts=self._now(), stage=stage, level=level, message=message, details=details)
+        self.rows.append(row)
 
-    # Flatten into key/value rows for readability in Excel
-    rows = []
+        # stdout for Actions
+        print(f"[{row.ts}] {row.level:<5} {row.stage}: {row.message} {row.details}".rstrip())
 
-    def add_block(title: str, obj: dict):
-        rows.append({"section": title, "key": "", "value": ""})
-        for k in sorted(obj.keys()):
-            v = obj.get(k)
-            rows.append({"section": title, "key": str(k), "value": "" if v is None else str(v)})
+        # jsonl for persistence
+        with self.jsonl_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row.__dict__, ensure_ascii=False) + "\n")
 
-    add_block("meta", meta)
-    add_block("config", {
-        "op_api_base": cfg.op_api_base,
-        "page_size(limit)": cfg.page_size,
-        "max_pages": cfg.max_pages,
-        "max_runtime_seconds": cfg.max_runtime_seconds,
-        "concurrency": cfg.concurrency,
-        "milk_cpv_prefixes": ",".join(cfg.milk_cpv_prefixes),
-        "milk_keywords": ",".join(cfg.milk_keywords),
-        "start_offset": cfg.start_offset,
-        "db_path": cfg.db_path,
-        "state_path": cfg.state_path,
-        "log_dir": cfg.log_dir,
-    })
-    add_block("state", state if isinstance(state, dict) else {})
-    add_block("fetch_report", fetch_report if isinstance(fetch_report, dict) else {})
-    add_block("normalize_report", normalize_report if isinstance(normalize_report, dict) else {})
 
-    return pd.DataFrame(rows, columns=["section", "key", "value"])
+def read_jsonl(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame(columns=["ts", "stage", "level", "message", "details"])
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                # fallback: raw line as message
+                rows.append({"ts": "", "stage": "unknown", "level": "INFO", "message": line, "details": ""})
+    return pd.DataFrame(rows)
+
+
+def safe_sheet_name(name: str, used: set) -> str:
+    # Excel sheet name: max 31 chars, cannot contain: : \ / ? * [ ]
+    bad = [":", "\\", "/", "?", "*", "[", "]"]
+    for ch in bad:
+        name = name.replace(ch, "_")
+    name = name.strip() or "sheet"
+    name = name[:31]
+
+    base = name
+    i = 2
+    while name in used:
+        suffix = f"_{i}"
+        name = (base[: 31 - len(suffix)] + suffix)[:31]
+        i += 1
+    used.add(name)
+    return name
+
+
+def list_tables(conn: sqlite3.Connection) -> List[str]:
+    q = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"
+    return [r[0] for r in conn.execute(q).fetchall()]
+
+
+def table_to_df(conn: sqlite3.Connection, table: str) -> pd.DataFrame:
+    # robust for arbitrary schemas
+    return pd.read_sql_query(f'SELECT * FROM "{table}"', conn)
+
+
+def write_meta_sheet(writer: pd.ExcelWriter, meta: Dict[str, Any]) -> None:
+    df = pd.DataFrame([{"key": k, "value": v} for k, v in meta.items()])
+    df.to_excel(writer, sheet_name="meta", index=False)
 
 
 def main() -> None:
-    cfg = Config.load()
-    logger = setup_stage_logger("normalize", cfg.log_dir, cfg.keep_log_files)
+    parser = argparse.ArgumentParser(description="Normalize/export Prozorro milk dataset to XLSX (with logs sheet).")
+    parser.add_argument("--data-dir", default=os.getenv("DATA_DIR", "data"))
+    parser.add_argument("--db-path", default=os.getenv("DB_PATH", ""), help="Path to sqlite DB (default: data/prozorro_milk.sqlite)")
+    parser.add_argument("--state-path", default=os.getenv("STATE_PATH", ""), help="Path to state.json (default: data/state.json)")
+    parser.add_argument("--xlsx-path", default=os.getenv("XLSX_PATH", ""), help="Output XLSX path (default: data/prozorro-milk.xlsx)")
+    parser.add_argument("--run-log-jsonl", default=os.getenv("RUN_LOG_JSONL", ""), help="JSONL logs path (default: data/run_logs.jsonl)")
+    args = parser.parse_args()
 
-    os.makedirs(cfg.out_dir, exist_ok=True)
-    report_dir = os.path.join(cfg.out_dir, "reports")
-    os.makedirs(report_dir, exist_ok=True)
+    data_dir = Path(args.data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-    if not os.path.exists(cfg.db_path):
-        logger.warning(f"No DB found at {cfg.db_path}. Nothing to export.")
-        with open(os.path.join(report_dir, "normalize_report.json"), "w", encoding="utf-8") as f:
-            json.dump({"status": "no_db", "db_path": cfg.db_path}, f, ensure_ascii=False, indent=2)
-        return
+    db_path = Path(args.db_path) if args.db_path else data_dir / "prozorro_milk.sqlite"
+    state_path = Path(args.state_path) if args.state_path else data_dir / "state.json"
+    xlsx_path = Path(args.xlsx_path) if args.xlsx_path else data_dir / "prozorro-milk.xlsx"
+    run_log_jsonl = Path(args.run_log_jsonl) if args.run_log_jsonl else data_dir / "run_logs.jsonl"
 
-    conn = sqlite3.connect(cfg.db_path)
+    logger = RunLogger(run_log_jsonl)
+    logger.log("normalize", "Start XLSX export", db=str(db_path), xlsx=str(xlsx_path))
 
-    tenders = pd.read_sql_query("SELECT * FROM milk_tenders", conn)
-    items = pd.read_sql_query("SELECT * FROM milk_items", conn)
+    if not db_path.exists():
+        logger.log("normalize", "DB not found, nothing to export", level="ERROR", db=str(db_path))
+        raise SystemExit(2)
 
-    logger.info(f"Loaded: tenders={len(tenders)}, items={len(items)}")
+    # Load logs collected so far (includes this step too)
+    # We'll re-read at the end (so this step messages also included)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        tables = list_tables(conn)
+        logger.log("normalize", "Discovered tables", tables=tables)
 
-    # Stable sort (fixes your previous pandas ascending mismatch and avoids crashes)
-    tenders = _safe_sort(tenders, ["dateModified", "tender_id"])
-    items = _safe_sort(items, ["dateModified", "tender_id", "item_key"])
+        used_sheets: set = set()
+        xlsx_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Build progress + logs sheets
-    progress_df = _build_progress_df(cfg)
-    logs_df = _build_logs_df(cfg)
-
-    xlsx_path = os.path.join(cfg.out_dir, "milk_export.xlsx")
-
-    # Write XLSX with multiple sheets:
-    # - tenders
-    # - items
-    # - progress (state + reports + run meta)
-    # - logs (fetch_latest + normalize_latest)
-    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
-        tenders.to_excel(writer, sheet_name="tenders", index=False)
-        items.to_excel(writer, sheet_name="items", index=False)
-        progress_df.to_excel(writer, sheet_name="progress", index=False)
-        logs_df.to_excel(writer, sheet_name="logs", index=False)
-
-    # also keep CSV outputs (optional but useful)
-    items_csv = os.path.join(cfg.out_dir, "milk_items.csv")
-    tenders_csv = os.path.join(cfg.out_dir, "milk_tenders.csv")
-    items.to_csv(items_csv, index=False, encoding="utf-8")
-    tenders.to_csv(tenders_csv, index=False, encoding="utf-8")
-
-    report = {
-        "status": "ok",
-        "rows": {"tenders": int(len(tenders)), "items": int(len(items)), "log_lines": int(len(logs_df))},
-        "outputs": {
-            "xlsx": xlsx_path,
-            "milk_items_csv": items_csv,
-            "milk_tenders_csv": tenders_csv,
+        meta: Dict[str, Any] = {
+            "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "db_path": str(db_path),
+            "state_path": str(state_path),
+            "tables": ", ".join(tables),
         }
-    }
-    with open(os.path.join(report_dir, "normalize_report.json"), "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
 
-    logger.info(f"Exported XLSX with logs: {xlsx_path}")
+        # include state.json content (if exists) into meta
+        if state_path.exists():
+            try:
+                meta["state_json"] = state_path.read_text(encoding="utf-8")
+            except Exception as e:
+                meta["state_json"] = f"<failed to read state.json: {e}>"
+        else:
+            meta["state_json"] = "<missing>"
+
+        with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+            # meta first
+            write_meta_sheet(writer, meta)
+            used_sheets.add("meta")
+
+            # export each sqlite table to its own sheet
+            for t in tables:
+                logger.log("normalize", "Export table", table=t)
+                df = table_to_df(conn, t)
+
+                # Optional: stabilize order if common columns exist
+                for col in ["dateModified", "tender_id", "tenderID", "id"]:
+                    if col in df.columns:
+                        try:
+                            df = df.sort_values(col, ascending=True, kind="mergesort")
+                        except Exception:
+                            pass
+                        break
+
+                sheet = safe_sheet_name(t, used_sheets)
+                df.to_excel(writer, sheet_name=sheet, index=False)
+
+            # logs sheet (jsonl)
+            logger.log("normalize", "Attach logs sheet")
+            logs_df = read_jsonl(run_log_jsonl)
+            sheet_logs = safe_sheet_name("logs", used_sheets)
+            logs_df.to_excel(writer, sheet_name=sheet_logs, index=False)
+
+        logger.log("normalize", "XLSX export done", bytes=xlsx_path.stat().st_size)
+
+    finally:
+        conn.close()
+
+    # Re-ensure logs file contains final messages too
+    # (No extra action needed: logger already writes jsonl)
 
 
 if __name__ == "__main__":
