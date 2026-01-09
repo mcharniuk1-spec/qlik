@@ -83,4 +83,13 @@ jobs:
         run: |
           set -e
           git config user.name "github-actions[bot]"
-          git config user.email "github-acti
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # додаємо тільки те, що треба зберігати в repo
+          git add -A data/prozorro_milk.sqlite data/state.json data/prozorro-milk.xlsx data/run_logs.jsonl
+
+          # якщо змін немає — не падаємо
+          git diff --cached --quiet && echo "No changes to commit." && exit 0
+
+          git commit -m "Update XLSX with logs (auto)"
+          git push
