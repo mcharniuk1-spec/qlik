@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 @dataclass
 class State:
-    offset: float | None = None
+    offset: str | None = None
     updated_at: str | None = None
     pages_done: int = 0
     tenders_scanned: int = 0
