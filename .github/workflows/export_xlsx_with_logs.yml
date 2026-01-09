@@ -1,60 +1,53 @@
+# .github/workflows/export_xlsx_with_logs.yml
 name: export-xlsx-with-logs
 
 on:
   workflow_dispatch:
     inputs:
-      max_pages:
-        description: "Pages of /tenders feed per run"
-        required: true
-        default: "25"
-      max_runtime_seconds:
-        description: "Hard cap for fetch step (seconds)"
-        required: true
-        default: "2400"
-      reset_state:
-        description: "true to reset state.json"
-        required: true
-        default: "false"
-      reset_db:
-        description: "true to reset SQLite DB"
-        required: true
-        default: "false"
+      start_date:
+        description: "ISO date start (optional). Example: 2020-01-01"
+        required: false
+        default: ""
+      end_date:
+        description: "ISO date end (optional). Example: 2020-12-31"
+        required: false
+        default: ""
+      max_seconds:
+        description: "Hard budget for fetching stage (seconds)"
+        required: false
+        default: "3000"
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "20 3 * * *"
 
 permissions:
   contents: write
 
+concurrency:
+  group: export-xlsx-with-logs
+  cancel-in-progress: false
+
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
 
     env:
-      OP_API_BASE: "https://public.api.openprocurement.org/api/2.5"
-      DATA_DIR: "data"
-      OUT_DIR: "out"
-      LOG_DIR: "out/logs"
-      KEEP_LOG_FILES: "20"
+      DATA_DIR: data
+      DB_PATH: data/prozorro_milk.sqlite
+      STATE_PATH: data/state.json
+      XLSX_PATH: data/prozorro-milk.xlsx
+      RUN_LOG_JSONL: data/run_logs.jsonl
+      OP_API_BASE: https://public.api.openprocurement.org/api/2.5
 
-      MAX_PAGES: "25"
-      MAX_RUNTIME_SECONDS: "2400"
-      PAGE_SIZE: "100"
-      CONCURRENCY: "12"
-
-      # Optional: start from a specific cursor (string). Usually leave empty.
-      START_OFFSET: ""
-
-      # Milk filter
-      MILK_CPV_PREFIXES: "1551"
-      MILK_KEYWORDS: "молоко,milk,uht,ультрапастер,пастер,вершки,cream"
-
-      RESET_STATE: "false"
-      RESET_DB: "false"
+      # Якщо у тебе fetch_tenders читає такі env-и — вони підхопляться.
+      START_DATE: ${{ inputs.start_date }}
+      END_DATE: ${{ inputs.end_date }}
+      MAX_SECONDS: ${{ inputs.max_seconds }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -63,46 +56,31 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -V
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Resolve inputs (workflow_dispatch only)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
-          echo "MAX_PAGES=${{ inputs.max_pages }}" >> $GITHUB_ENV
-          echo "MAX_RUNTIME_SECONDS=${{ inputs.max_runtime_seconds }}" >> $GITHUB_ENV
-          echo "RESET_STATE=${{ inputs.reset_state }}" >> $GITHUB_ENV
-          echo "RESET_DB=${{ inputs.reset_db }}" >> $GITHUB_ENV
-
       - name: Fetch tenders (bounded)
         run: |
+          # твій існуючий модуль фетчу лишається як є
           python -m src.fetch_tenders
 
-      - name: Export XLSX with logs inside
+      - name: Normalize + write XLSX into data/
         run: |
-          python -m src.normalize_milk
+          # головне: XLSX пишеться в data/ і потім потрапляє в git
+          python -m src.normalize_milk --data-dir data
 
-      - name: Upload artifacts (xlsx + logs)
+      - name: Upload artifact (XLSX)
         uses: actions/upload-artifact@v4
         with:
           name: prozorro-milk-xlsx-with-logs
           path: |
-            out/milk_export.xlsx
-            out/logs/*
-            out/reports/*
+            data/prozorro-milk.xlsx
+            data/run_logs.jsonl
+            data/state.json
+            data/prozorro_milk.sqlite
 
-      - name: Commit outputs
+      - name: Commit results (DB/state/XLSX/logs)
         run: |
+          set -e
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add -A out data || true
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update XLSX with logs (auto)"
-          git push
+          git config user.email "github-acti
