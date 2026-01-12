@@ -1,21 +1,10 @@
-# Python
-__pycache__/
-*.pyc
-.venv/
-.env
-.env.*
+# Node
+apps/bi_milk_qlik/node_modules/
 
-# Outputs / state
-out/
-data/raw/
+# Local artifacts
+data/bi_milk_raw.xlsx
+data/*.tmp
+
+# OS / misc
+.DS_Store
 *.log
-
-# Local junk
-.env.save
-_local_backup/
-package-lock.json
-
-out/logs/*
-out/reports/*
-!out/logs/.keep
-!out/reports/.keep
