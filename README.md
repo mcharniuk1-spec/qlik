@@ -1,39 +1,45 @@
-## BI.Prozorro (Qlik Sense) export: Milk tenders (2024–2026)
+## Qlik BI export (Prozorro BI) — milk tenders/items 2024–2026
 
-Цей репозиторій підтримує експорт даних прямо з BI.Prozorro (Qlik Sense) через **Qlik Capability API** у headless-браузері (Playwright).
+This repository can export the underlying data of a Qlik Sense table from Prozorro BI using Qlik Capability APIs inside a headless browser (Playwright).
 
-### Чому саме так
-Qlik Capability API працює у браузері. Скрипт відкриває sheet URL, викликає `vis.exportData()` для таблиці/візуалізації, завантажує результат і пакує фінальний XLSX з окремим листом `logs`.
+### Why Playwright is required
+Qlik Capability APIs (Table API / Visualization API) run in a browser context. We load the BI sheet and then call the Visualization API `exportData()` which exports the underlying hypercube in OOXML (XLSX) or CSV.
 
-- `exportData()` експортує **underlying hypercube data** та повертає посилання на файл.  
-- Якщо потрібно дочитувати “сторінками”, Qlik має Table API (`qlik-table-interface`), але в цьому пайплайні базовий шлях — `exportData()`.
+Qlik docs:
+- Visualization API `exportData(options)` supports `OOXML`, `CSV_C`, `CSV_T` and returns a URL to the generated file. It exports the entire hypercube (not only current page).  
+- Table API `qlik.table` wraps hypercube data and also supports exporting data.
 
-### Які “таблиці” можна експортувати
-Практично будь-яка візуалізація, яка має HyperCube (straight table, pivot table, частина chart-ів). Експорт іде з HyperCube, а не з DOM.
+(See Qlik Sense Developer Help.)
 
-### Workflow
-Workflow: `.github/workflows/export_bi_milk_2024_2026.yml`
+### What data you can export
+You can export any **visualization object** (table/pivot/etc.) that has an underlying hypercube. The exported columns are exactly the dimensions/measures used by that visualization (plus whatever the BI app developer put there).
 
-Результат:
-- `data/prozorro_bi_milk_2024_2026.xlsx`:
-  - `data` або `data_YYYY` — дані (за 2024–2026 і CPV-фільтром)
-  - `meta` — метадані (включно з `qLastReloadTime` як індикатор “freshness”)
-  - `logs` — покроковий прогрес
-- `data/prozorro_bi_milk_2024_2026.csv`
-- `data/prozorro_bi_milk_2024_2026.logs.jsonl`
+### Configuration
+Edit `config/bi_milk.json`:
+- `bi_url` — full BI sheet URL
+- `app_id` — Qlik app id (from URL)
+- `sheet_id` — sheet id (from URL)
+- `viz_id` — **ID of the table visualization object** on that sheet (required)
+- `field_year`, `field_cpv` — optional Qlik field names used for selection
+  - if empty, the script tries to auto-detect candidates
+- `year_from`, `year_to` — export window
+- `cpv_codes` — strict CPV list (dairy)
+- `export_format` — `OOXML` (xlsx) or `CSV_C` / `CSV_T`
 
-### Параметри (env / workflow_dispatch)
-- `BI_URL` — URL sheet у BI.Prozorro
-- `YEARS` — кома-список років (default: `2024,2025,2026`)
-- `CPV_CODES` — кома-список CPV (dairy):
-  `15500000-3,15510000-6,15511000-3,15511100-4,15511210-8,15512000-0,15530000-2,15540000-5,15550000-8`
-- `VIZ_ID` — (опційно) конкретний object id таблиці. Якщо порожньо, скрипт пробує авто-детект.
-- `DISCOVER_ONLY=true` — режим “тільки знайти”: збирає candidates, chosen, qLastReloadTime, але не експортує data.
-- `FIELD_YEAR`, `FIELD_CPV` — (опційно) назви полів у Qlik, якщо авто-детект не спрацював.
-- `EXPORT_FORMAT` — `CSV_C` (default) або `OOXML` (xlsx з боку Qlik, якщо стабільно працює на твоєму app)
+### Export parameters (Qlik exportData)
+`exportData({ format, state })`
+- `format`: `OOXML` (default), `CSV_C`, `CSV_T`
+- `state`: `P` (possible values, default) or `A` (all values)
 
-### Як гарантовано знайти правильний VIZ_ID
-1) Запусти workflow вручну з `discover_only=true`.
-2) В `data/prozorro_bi_milk_2024_2026.xlsx` → лист `meta`:
-   - `candidates` містить список об’єктів і їх `qType/size/title`.
-3) Візьми потрібний `id` і передай як `VIZ_ID` у звичайному запуску.
+### Output
+Workflow produces:
+- `data/prozorro_bi_milk_2024_2026.xlsx`
+  - `data` (or `data_2024`, `data_2025`, `data_2026` if too large)
+  - `meta` (run parameters + counts + date range)
+  - `per_year` (rows per year export file)
+  - `logs` (step-by-step JSONL logs collected during export)
+
+### How to find `viz_id` and field names
+Run the GitHub Action with input `mode=discover`. It writes:
+- `out/bi/discover.json` as an artifact (fields list + best-effort sheet object list)
+Then copy `viz_id` into `config/bi_milk.json`.
