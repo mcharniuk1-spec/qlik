@@ -1,0 +1,11 @@
+{
+  "name": "bi-milk-qlik",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run": "node run.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}
