@@ -1,37 +1,39 @@
-## OpenProcurement API: як ми дістаємо дані Prozorro
+## BI.Prozorro (Qlik Sense) export: Milk tenders (2024–2026)
 
-Ми використовуємо **публічний REST API** OpenProcurement. Для читання публічних тендерів **ключ не потрібен** (але частина процедур може мати обмежений доступ / restricted).  
+Цей репозиторій підтримує експорт даних прямо з BI.Prozorro (Qlik Sense) через **Qlik Capability API** у headless-браузері (Playwright).
 
-### Основні endpoint-и
-- `GET /tenders`
-  - повертає фід тендерів, **відсортований за часом модифікації (dateModified)**  
-  - батч керується параметром `limit` (якщо не задано — 100)  
-  - пагінація через `next_page.offset` у відповіді — цей offset треба підставляти в наступний запит
-- `GET /tenders/{id}`
-  - деталі тендеру (зокрема `items[]`, `classification.id`, `description`, `value`, `procuringEntity`, `status`, `dateModified`)
+### Чому саме так
+Qlik Capability API працює у браузері. Скрипт відкриває sheet URL, викликає `vis.exportData()` для таблиці/візуалізації, завантажує результат і пакує фінальний XLSX з окремим листом `logs`.
 
-Важливо: `offset` — це **курсор**, він може бути рядком, тому його не можна насильно перетворювати у число.  
-Якщо `next_page.offset` відсутній або `data=[]` — далі листати немає сенсу.
+- `exportData()` експортує **underlying hypercube data** та повертає посилання на файл.  
+- Якщо потрібно дочитувати “сторінками”, Qlik має Table API (`qlik-table-interface`), але в цьому пайплайні базовий шлях — `exportData()`.
 
-Посилання на документацію:
-- Sorting + limit: tenders sorted by modification time; default batches of 100, limit controls batch size
-- next_page/offset: offset потрібно підставляти в наступний запит, next_page містить offset/path/uri
-- OpenProcurement API — REST доступ до бази тендерів
-- Restricted: деякі тендери можуть мати обмежений доступ (restricted)
+### Які “таблиці” можна експортувати
+Практично будь-яка візуалізація, яка має HyperCube (straight table, pivot table, частина chart-ів). Експорт іде з HyperCube, а не з DOM.
 
-## Логи по стадіях (Fetch / Normalize)
-Кожен запуск формує:
-- `out/logs/fetch_latest.log` + `out/logs/fetch_YYYYMMDD_HHMMSS.log`
-- `out/logs/normalize_latest.log` + `out/logs/normalize_YYYYMMDD_HHMMSS.log`
+### Workflow
+Workflow: `.github/workflows/export_bi_milk_2024_2026.yml`
 
-А також короткі звіти:
-- `out/reports/fetch_report.json`
-- `out/reports/normalize_report.json`
+Результат:
+- `data/prozorro_bi_milk_2024_2026.xlsx`:
+  - `data` або `data_YYYY` — дані (за 2024–2026 і CPV-фільтром)
+  - `meta` — метадані (включно з `qLastReloadTime` як індикатор “freshness”)
+  - `logs` — покроковий прогрес
+- `data/prozorro_bi_milk_2024_2026.csv`
+- `data/prozorro_bi_milk_2024_2026.logs.jsonl`
 
-## Параметри (ENV)
-- `OP_API_BASE` (default: https://public.api.openprocurement.org/api/2.5)
-- `MAX_PAGES`, `MAX_RUNTIME_SECONDS`, `PAGE_SIZE` (= limit), `CONCURRENCY`
-- `START_OFFSET` (опційно) — рядок, з якого почати фід
-- `RESET_STATE`, `RESET_DB`
-- `MILK_CPV_PREFIXES`, `MILK_KEYWORDS`
-- `LOG_DIR` (default: out/logs), `KEEP_LOG_FILES` (default: 15)
+### Параметри (env / workflow_dispatch)
+- `BI_URL` — URL sheet у BI.Prozorro
+- `YEARS` — кома-список років (default: `2024,2025,2026`)
+- `CPV_CODES` — кома-список CPV (dairy):
+  `15500000-3,15510000-6,15511000-3,15511100-4,15511210-8,15512000-0,15530000-2,15540000-5,15550000-8`
+- `VIZ_ID` — (опційно) конкретний object id таблиці. Якщо порожньо, скрипт пробує авто-детект.
+- `DISCOVER_ONLY=true` — режим “тільки знайти”: збирає candidates, chosen, qLastReloadTime, але не експортує data.
+- `FIELD_YEAR`, `FIELD_CPV` — (опційно) назви полів у Qlik, якщо авто-детект не спрацював.
+- `EXPORT_FORMAT` — `CSV_C` (default) або `OOXML` (xlsx з боку Qlik, якщо стабільно працює на твоєму app)
+
+### Як гарантовано знайти правильний VIZ_ID
+1) Запусти workflow вручну з `discover_only=true`.
+2) В `data/prozorro_bi_milk_2024_2026.xlsx` → лист `meta`:
+   - `candidates` містить список об’єктів і їх `qType/size/title`.
+3) Візьми потрібний `id` і передай як `VIZ_ID` у звичайному запуску.
