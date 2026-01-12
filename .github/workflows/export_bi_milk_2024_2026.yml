@@ -3,46 +3,47 @@ name: export-bi-milk-2024-2026
 on:
   workflow_dispatch:
     inputs:
-      bi_url:
-        description: "BI.Prozorro Qlik sheet URL"
-        required: false
-        default: "https://bi.prozorro.org/sense/app/ec65fa69-14a5-4337-b907-23682ef09702/sheet/50bd2887-a09b-456c-bca2-956c0c14faaf/state/analysis"
-      years:
-        description: "Years CSV"
-        required: false
-        default: "2024,2025,2026"
-      cpv_codes:
-        description: "CPV codes CSV"
-        required: false
-        default: "15500000-3,15510000-6,15511000-3,15511100-4,15511210-8,15512000-0,15530000-2,15540000-5,15550000-8"
-      viz_id:
-        description: "Optional: exact Qlik object id (if known)"
-        required: false
-        default: ""
-      discover_only:
-        description: "If true: only discover viz/fields and write logs, no export"
-        required: false
-        default: "false"
-
+      mode:
+        description: "discover or export"
+        required: true
+        default: "export"
   schedule:
-    # 10:05 UTC ~= 12:05 Kyiv (зимою). Якщо DST зсуває — підправиш cron.
-    - cron: "5 10 * * *"
+    - cron: "12 10 * * *"  # daily ~10:12 UTC (adjust as needed)
 
 permissions:
   contents: write
 
 concurrency:
-  group: export-bi-milk
+  group: export-bi-milk-2024-2026
   cancel-in-progress: false
 
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Node deps (Playwright)
+        run: |
+          npm init -y
+          npm i -D playwright
+          npx playwright install --with-deps chromium
+
+      - name: Export from Qlik BI (discover/export)
+        env:
+          CONFIG: config/bi_milk.json
+          OUT_DIR: out/bi
+          DISCOVER: ${{ inputs.mode == 'discover' && '1' || '0' }}
+        run: |
+          node scripts/qlik_export_bi_milk.mjs
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -52,46 +53,31 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install pandas openpyxl
 
-      - name: Install Playwright browser
-        run: |
-          python -m playwright install --with-deps chromium
-
-      - name: Run BI export (Qlik Capability API)
+      - name: Build final XLSX (data + logs)
+        if: ${{ inputs.mode != 'discover' }}
         env:
-          BI_URL: ${{ inputs.bi_url }}
-          YEARS: ${{ inputs.years }}
-          CPV_CODES: ${{ inputs.cpv_codes }}
-          VIZ_ID: ${{ inputs.viz_id }}
-          DISCOVER_ONLY: ${{ inputs.discover_only }}
-          OUT_XLSX: "data/prozorro_bi_milk_2024_2026.xlsx"
-          OUT_CSV: "data/prozorro_bi_milk_2024_2026.csv"
-          LOG_JSONL: "data/prozorro_bi_milk_2024_2026.logs.jsonl"
-          HEADLESS: "true"
+          CONFIG: config/bi_milk.json
+          OUT_DIR: out/bi
+          DEST_XLSX: data/prozorro_bi_milk_2024_2026.xlsx
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
-          python -m src.export_bi_milk
+          python src/build_bi_milk_xlsx.py
 
-      - name: Upload artifact (XLSX + logs)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: prozorro-bi-milk-2024-2026
+          name: prozorro-bi-milk-${{ github.run_id }}
           path: |
+            out/bi/*
             data/prozorro_bi_milk_2024_2026.xlsx
-            data/prozorro_bi_milk_2024_2026.csv
-            data/prozorro_bi_milk_2024_2026.logs.jsonl
-          if-no-files-found: error
 
-      - name: Commit results to repo (data/)
+      - name: Commit results to repo
+        if: ${{ inputs.mode != 'discover' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add data/prozorro_bi_milk_2024_2026.xlsx data/prozorro_bi_milk_2024_2026.csv data/prozorro_bi_milk_2024_2026.logs.jsonl || true
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update BI milk dataset (2024–2026) + logs [auto]"
-          git push
+          git add data/prozorro_bi_milk_2024_2026.xlsx || true
+          git commit -m "Update Prozorro BI milk XLSX (2024-2026)" || echo "Nothing to commit"
+          git push || true
