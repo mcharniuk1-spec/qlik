@@ -2,47 +2,14 @@ name: export-bi-milk-2024-2026
 
 on:
   workflow_dispatch:
-    inputs:
-      mode:
-        description: "discover або export"
-        required: true
-        default: "export"
-      bi_url:
-        description: "BI sheet URL"
-        required: true
-        default: "https://bi.prozorro.org/sense/app/ec65fa69-14a5-4337-b907-23682ef09702/sheet/50bd2887-a09b-456c-bca2-956c0c14faaf/state/analysis"
-      viz_id:
-        description: "VIZ_ID (потрібен для export). Для discover можна лишити порожнім."
-        required: false
-        default: ""
-      years:
-        description: "Роки через кому"
-        required: true
-        default: "2024,2025,2026"
-      cpv_codes:
-        description: "CPV dairy codes через кому"
-        required: true
-        default: "15500000-3,15510000-6,15511000-3,15511100-4,15511210-8,15512000-0,15530000-2,15540000-5,15550000-8"
-      qlik_field_year:
-        description: "Назва поля року в Qlik (як у моделі даних). Якщо не знаєш — лиши порожнім, буде пост-фільтр."
-        required: false
-        default: ""
-      qlik_field_cpv:
-        description: "Назва поля CPV в Qlik. Якщо не знаєш — лиши порожнім, буде пост-фільтр."
-        required: false
-        default: ""
-
-permissions:
-  contents: write
-
-concurrency:
-  group: export-bi-milk-2024-2026
-  cancel-in-progress: false
+  schedule:
+    # 12:00 Kyiv (зима = UTC+2) => 10:00 UTC
+    - cron: "0 10 * * *"
 
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -53,56 +20,27 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Node deps
-        working-directory: apps/bi_milk_qlik
-        run: |
-          npm ci
+      - name: Install dependencies
+        working-directory: bi-export
+        run: npm install
 
-      - name: Install Playwright (chromium)
-        working-directory: apps/bi_milk_qlik
-        run: |
-          npx playwright install --with-deps chromium
+      - name: Install Playwright (Chromium)
+        working-directory: bi-export
+        run: npx playwright install --with-deps chromium
 
-      - name: Run Qlik step (discover/export)
+      - name: Run export (milk 2024-2026)
+        working-directory: bi-export
         env:
-          MODE: ${{ inputs.mode }}
-          BI_URL: ${{ inputs.bi_url }}
-          VIZ_ID: ${{ inputs.viz_id }}
-          YEARS: ${{ inputs.years }}
-          CPV_CODES: ${{ inputs.cpv_codes }}
-          QLIK_FIELD_YEAR: ${{ inputs.qlik_field_year }}
-          QLIK_FIELD_CPV: ${{ inputs.qlik_field_cpv }}
-        run: |
-          node apps/bi_milk_qlik/run.mjs
+          BI_TABLE_VIZ_ID: ${{ secrets.BI_TABLE_VIZ_ID }}
+        run: node src/cli.js export --config config/bi_milk.json
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Postprocess to final XLSX (with logs sheet)
-        run: |
-          python apps/bi_milk_qlik/postprocess.py
-
-      - name: Upload artifact (XLSX)
+      - name: Upload artifact (xlsx + logs + raw)
         uses: actions/upload-artifact@v4
         with:
-          name: bi-milk-2024-2026-xlsx
-          path: data/bi-milk-2024-2026.xlsx
-
-      - name: Commit results into repo (data/)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/bi-milk-2024-2026.xlsx data/bi_milk_export.log data/bi_milk_discover.json || true
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-          git commit -m "Update BI milk 2024-2026 export (auto)"
-          git push
+          name: prozorro-bi-milk-2024-2026
+          if-no-files-found: error
+          path: |
+            bi-export/out/*.xlsx
+            bi-export/out/*.json
+            bi-export/out/*.jsonl
+            bi-export/out/*.csv
