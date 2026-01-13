@@ -1,0 +1,34 @@
+{
+  "bi_url": "https://bi.prozorro.org/sense/app/ec65fa69-14a5-4337-b907-23682ef09702/sheet/50bd2887-a09b-456c-bca2-956c0c14faaf/state/analysis",
+  "prefix": "/sense/",
+  "table_viz_id": "",
+
+  "years": [2024, 2025, 2026],
+  "cpv_codes": [
+    "15500000-3",
+    "15510000-6",
+    "15511000-3",
+    "15511100-4",
+    "15511210-8",
+    "15512000-0",
+    "15530000-2",
+    "15540000-5",
+    "15550000-8"
+  ],
+
+  "export_format": "CSV_C",
+  "export_state": "P",
+
+  "timeout_ms": 180000,
+  "headless": true,
+
+  "output_dir": "out",
+  "output_xlsx": "prozorro-bi-milk-2024-2026.xlsx",
+
+  "field_hints": {
+    "cpv": ["classification_id", "cpv", "CPV", "Код ДК", "Код CPV", "dk"],
+    "year": ["year", "Year", "Рік", "tender_year"],
+    "tender_id": ["tenderID", "tender_id", "tenderId", "tender"],
+    "date": ["dateModified", "Дата", "date", "tender_date"]
+  }
+}
