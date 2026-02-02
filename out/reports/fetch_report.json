@@ -1,18 +1,18 @@
 {
   "status": "ok",
-  "elapsed_seconds": 55.072,
+  "elapsed_seconds": 37.282,
   "state": {
-    "offset": "1478284564.913582.1.0cd772466fc28555a4aebb425a5df0f6",
-    "updated_at": "2026-01-31T04:44:11.051368+00:00",
-    "pages_done": 500,
-    "tenders_scanned": 50000,
-    "tenders_fetched": 50000,
-    "milk_tenders": 515,
-    "milk_items": 562
+    "offset": "1478284961.29498.1.79a84806281323773c9f5b3177e3b14b",
+    "updated_at": "2026-02-02T05:07:32.851001+00:00",
+    "pages_done": 550,
+    "tenders_scanned": 55000,
+    "tenders_fetched": 55000,
+    "milk_tenders": 599,
+    "milk_items": 677
   },
   "api_base": "https://public.api.openprocurement.org/api/2.5",
   "pagination": {
     "limit": 100,
-    "offset": "1478284564.913582.1.0cd772466fc28555a4aebb425a5df0f6"
+    "offset": "1478284961.29498.1.79a84806281323773c9f5b3177e3b14b"
   }
 }
