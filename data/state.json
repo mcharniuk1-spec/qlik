@@ -1,9 +1,9 @@
 {
-  "offset": "1478285333.976573.1.8bb098b780bc848e1202e0b636d03b87",
-  "updated_at": "2026-02-03T04:58:29.537740+00:00",
-  "pages_done": 600,
-  "tenders_scanned": 60000,
-  "tenders_fetched": 60000,
-  "milk_tenders": 674,
-  "milk_items": 765
+  "offset": "1478285517.152626.1.c53e0b0a55193f8a8f53a8c8227da577",
+  "updated_at": "2026-02-04T04:51:48.909765+00:00",
+  "pages_done": 625,
+  "tenders_scanned": 62500,
+  "tenders_fetched": 62500,
+  "milk_tenders": 712,
+  "milk_items": 805
 }
