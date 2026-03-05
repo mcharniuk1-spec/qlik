@@ -352,3 +352,9 @@
 {"ts": "2026-03-04T04:51:22+00:00", "stage": "normalize", "level": "INFO", "message": "Export table", "details": "{\"table\": \"milk_tenders\"}"}
 {"ts": "2026-03-04T04:51:22+00:00", "stage": "normalize", "level": "INFO", "message": "Attach logs sheet", "details": ""}
 {"ts": "2026-03-04T04:51:23+00:00", "stage": "normalize", "level": "INFO", "message": "XLSX export done", "details": "{\"bytes\": 479807}"}
+{"ts": "2026-03-05T04:55:11+00:00", "stage": "normalize", "level": "INFO", "message": "Start XLSX export", "details": "{\"db\": \"data/prozorro_milk.sqlite\", \"xlsx\": \"data/prozorro-milk.xlsx\"}"}
+{"ts": "2026-03-05T04:55:11+00:00", "stage": "normalize", "level": "INFO", "message": "Discovered tables", "details": "{\"tables\": [\"milk_items\", \"milk_tenders\"]}"}
+{"ts": "2026-03-05T04:55:11+00:00", "stage": "normalize", "level": "INFO", "message": "Export table", "details": "{\"table\": \"milk_items\"}"}
+{"ts": "2026-03-05T04:55:12+00:00", "stage": "normalize", "level": "INFO", "message": "Export table", "details": "{\"table\": \"milk_tenders\"}"}
+{"ts": "2026-03-05T04:55:12+00:00", "stage": "normalize", "level": "INFO", "message": "Attach logs sheet", "details": ""}
+{"ts": "2026-03-05T04:55:12+00:00", "stage": "normalize", "level": "INFO", "message": "XLSX export done", "details": "{\"bytes\": 483974}"}
